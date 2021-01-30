@@ -1,0 +1,132 @@
+---
+title: "QIIME2 Figure Creator"
+author: "Stephan Bitterwolf & Ariel Santero"
+date: "9/16/2020"
+output: html_document
+---
+
+```{r Setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 12,fig.height = 12)
+
+```
+
+Step 0: Preprocessing data
+
+##Feature Table Wide to Long conversion
+In this code block we will convert the feauture table data from a wide to a long format. Long formats are important for easy graphing. They are computer readable. Wide formats are more intuitive for people.
+
+*The following code was created by Ariel Santero and Stephan Bitterwolf*
+Step 1: Dowload the Feature table data as a CSV file and then import into R
+```{r Import and Clean CSV file}
+#Set working directory
+workingDir = "C:/Users/Stephan/Microbiome/qiime/01_Diseased_Edge_vs_healthy/exported-feature-table/" 
+filename = "coral-feature-table.csv"
+feature_table <- read.csv(paste(workingDir, filename, sep = ""))
+#Improper formatting of column labels results in introduction of "X" and "."
+##Remove X from column names
+    #storing column names
+    column_names <-colnames(feature_table)
+    #matching patterns to ID bad columns
+    column_names[grep("(^X\\.)|(^X[a-z])|(^X[0-9])", column_names, perl=T)]
+    #substituting "X" or "X." with "" (i.e., nothing)
+    column_names<-gsub("(^X\\.)|(^X)", "",  column_names)
+    #substituting "." with "-"
+    column_names<-gsub("(\\.)", "-",  column_names)
+    #saving fixed column names to silva_uscs... dataframe
+    colnames(feature_table)<-column_names
+
+#remove pesky taxonomic classifier labels (i.e., "d__" for domain, "p__" for phylum, etc.)
+    feature_table$taxonomy<-gsub("(d__)|(p__)|(c__)|(o__)|(f__)|(g__)|(s__)","",paste(feature_table$taxonomy))
+```
+
+Step 2: Split the taxonomy column based on taxonomic rank using the separate() function.
+
+```{r Split Taxonomy Column}
+#load tidyr and dplyr library
+library(tidyr)
+library(dplyr)
+
+#split taxonomy column by ";" and label new columns "Domain", "Phylum", "Class", etc.
+feature_table <- separate(feature_table, col = taxonomy, into = c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species"), sep = "; ")
+
+#Replace NA values with "No Match"
+feature_table <-feature_table %>% 
+  mutate(
+    across(everything(), ~replace_na(.x, "No Match"))
+  )
+
+```
+
+Step 3: Convert the file from wide to long format using the pivot_longer() function.
+
+```{r Converting to long format}
+feature_table_long<- pivot_longer(feature_table, cols = "2-IP":"8-IP", names_to = "sample", values_to = "count" )
+head(feature_table_long)
+feature_table_long$count<-as.integer(feature_table_long$count)
+```
+
+Step 4: Filter out reads stemming from Mitochondria or Chloroplast
+
+```{r Filtering out Mitochondria and Chloroplast}
+
+#This could also be done in the QIIME2 pipeline
+##Filter out Chloroplast and Mitochondria reads
+filtered_ft<-filter(feature_table_long, Family != "Chloroplast", Family != "Mitochondria")
+#print the SUM of counts removed from the original dataframe
+print(paste("A total of ",sum(subset(feature_table_long, Family == "Chloroplast")$count)," Chloropast reads were removed", sep=""))
+print(paste("A total of ",sum(subset(feature_table_long, Family == "Mitochondria")$count)," Mitochondria reads were removed", sep=""))
+
+#Save filtered_FT
+write.csv(filtered_ft, file = "filtered_ft.csv")
+```
+## Create Figures
+
+Here we create relative frequency graphs for different taxonomic levels with GGPLOT2.
+
+``` {r Relative Frequency}
+library(ggplot2)
+library(viridis)
+
+## Data Manipulation
+library(dplyr)
+#storing column names to loop over in the for loop
+column_names<-colnames(filtered_ft)
+
+for(i in 2:8) {
+#grouping the data for the summarize function looping over the column name list (Domain -> Species)
+modified_data <- group_by(filtered_ft, get(column_names[i]), sample)
+#summarize the modified_data dataframe and create a column that sums the counts by sample and taxonomic level
+summarized_data <- summarize(modified_data, count=sum(count))
+#rename the first column in the sumarized_data dataframe
+colnames(summarized_data)[1] <- column_names[i]
+#reorder values so that the largers taxa is listed first in the legend for ggplot2
+summarized_data[,1]<- with(summarized_data, reorder(get(column_names[i]), desc(count)))
+
+#Recolor "No Match" to grey https://stackoverflow.com/questions/47354990/manually-change-colour-of-one-factor-level-in-ggplot2-stacked-barplot
+
+##Create Custom Colors that grey out "No Match" data
+#create new dataframe based on the sorting of the taxonomic level by descending count from the summarized_data
+custom_colors<-t(as.data.frame(sort(unique(with(summarized_data, reorder(get(column_names[i]), desc(count)))))))
+#saves the values to the colum name
+colnames(custom_colors) <- custom_colors
+#rename the row to "Hex Color"
+row.names(custom_colors)<-"Hex Color"
+#Add custom color Hex values to the first row using the viridis package for the length of columns
+custom_colors[1,]<-viridis(length(custom_colors))
+#Not all taxonomic levels have "No Match" therefore we escape errors by using try()
+try(custom_colors[,"No Match"]<- "#808080", silent=TRUE)
+
+
+#Create the plot
+print(ggplot(summarized_data, aes(x=sample, y=count, fill=column_names[i]))+
+    geom_bar(aes(fill=get(column_names[i])), color="black", position="fill", stat="identity")+
+    #scale_fill_viridis_d()+
+    labs(fill=paste(column_names[i],sep=""))+
+    scale_fill_manual(values=custom_colors)+
+    theme(legend.position="bottom", legend.box = "horizontal")
+    )
+###This was a great start. Now I need to remove unneccesary label levels such as those that are lowly abundant. I think it is a good idea to label those as "Other"
+
+}
+
+```

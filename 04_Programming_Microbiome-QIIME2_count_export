@@ -1,0 +1,26 @@
+conda activate qiime2-2020.8
+
+cd qiime/01_Diseased_Edge_vs_healthy/
+
+#Export feature table
+qiime tools export \
+  --input-path deblur_output/table.qza \
+  --output-path exported-feature-table
+#Export taxonomy
+qiime tools export \
+  --input-path taxa/taxonomy.qza \
+  --output-path exported-feature-table
+#Add metadata
+biom add-metadata \
+--input-fp exported-feature-table/feature-table.biom \
+--output-fp exported-feature-table/coral-feature-table.biom \
+--observation-metadata-fp exported-feature-table/taxonomy.tsv \
+--observation-header FeatureID,taxonomy,confidence
+#Convert to tsv file
+biom convert \
+--input-fp exported-feature-table/coral-feature-table.biom \
+--output-fp exported-feature-table/coral-feature-table.tsv \
+--to-tsv \
+--header-key taxonomy
+#Convert tsv to csv and remove first row
+cat exported-feature-table/coral-feature-table.tsv | tail -n +2 | tr "\\t" "," > exported-feature-table/coral-feature-table.csv
