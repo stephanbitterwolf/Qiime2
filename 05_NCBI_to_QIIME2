@@ -1,0 +1,81 @@
+### Dowloading NCBI Data for QIIME2 Tutorial ###
+
+#00. Set-up
+    #Install the following packages
+        #1. Mini Conda: https://docs.conda.io/projects/conda/...
+        #2. BioConda: https://bioconda.github.io/user/insta...
+        #3. GNU Parallel: https://www.gnu.org/software/parallel/
+        #4. SRA-tools: https://anaconda.org/bioconda/sra-tools
+            #Quick Guide: https://bioinformaticsworkbook.org/dataAcquisition/fileTransfer/sra.html
+        #5. QIIME2: https://docs.qiime2.org/2020.8/install/native/#install-qiime-2-within-a-conda-environment
+    #Create Directory
+    mkdir NCBI_Data
+    cd NCBI_Data
+    mkdir Pollock
+    cd Pollock
+#01. Go to the NCBI Studies Browser
+    #1. https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=studies
+    #2. Search for "Coral Pollock"
+    #3. Download Metadata into Excel (or google sheets)
+    #4. Identify Relevant Sequences
+    #5. Save Run Numbers into text file called Coral_Tissue_Runs.txt
+    #6. Move text file into NCBI_Data Directory
+#02. Create Metadata TSV for QIIME2
+    #1. Copy and paste all columns and relevant rows into a new googlesheet
+    #2. Add a row below the header row
+    #3. Move barcode column to second column in the google sheets
+    #4. Rename the "Run" column as "sample-id"
+    #5. Add #q2:types values to each column (i.e., "categorical", "numerical")
+    #6. Download as .tsv (tab separated value)
+    #7. Rename metadata to sample-metadata.tsv
+#03. Begin Data Download
+    #Download the data in parallel
+        cat Coral_Tissue_Runs.txt  | parallel -j0 prefetch {}
+    #Move all .sra files out of their folders and into the working directory
+        find . -name '*.sra' -print0 | parallel -X mv {} .
+    #Delete all empty folders in the working directory
+        find . -type d -empty -delete
+#04. Convert all .sra files into fastq files
+    ls *.sra | parallel -j0 fastq-dump --split-files --origfmt {}
+    #Move .fastq and .sra file types into their own folders
+        mkdir fastq
+        mv *.fastq fastq
+        mkdir sra
+        mv *.sra sra
+#05. Prepare files for QIIME2 import
+    cd fastq
+    mkdir manifest
+    #Create Manifest file (https://docs.qiime2.org/2020.8/tutorials/importing/#fastq-manifest-formats)
+    	#create header
+				echo "# paired-end PHRED 33 fastq manifest file for forward and reverse reads" > manifest1.txt
+				echo -e "sample-id\tforward-absolute-filepath\treverse-absolute-filepath" >> manifest1.txt
+			#create text file with ID path to forward and path to reverse separated by tabs
+				 ls *.fastq | cut -d "_" -f 1 | sort | uniq | parallel -j0 --keep-order 'echo -e "{/}\t"$PWD"/{/}_1.fastq\t"$PWD"/{/}_2.fastq"' | tr -d "'" > manifest2.txt
+			#create full file
+				cat manifest1.txt manifest2.txt > manifest/manifest.tsv
+		#Delete text files
+			rm *.txt
+			cd ..  
+#06. Begin Qiime data import 
+        conda activate qiime2-2020.8
+        #set number of cores
+			NCORES=24
+        qiime tools import \
+        --type 'SampleData[PairedEndSequencesWithQuality]' \
+        --input-path fastq/manifest/manifest.tsv \
+        --output-path demux.qza \
+        --input-format PairedEndFastqManifestPhred33V2
+            
+        qiime demux summarize --i-data demux.qza --o-visualization demux.qzv
+        ### View Output
+#07. Create ASVs
+        time qiime dada2 denoise-paired \
+        --i-demultiplexed-seqs paired-end-demux.qza \
+        --p-trim-left-f 5 \
+        --p-trim-left-r 5 \
+        --p-trunc-len-f 200 \
+        --p-trunc-len-r 200 \
+        --p-n-threads 20 \
+        --o-table table.qza \
+        --o-representative-sequences rep-seqs.qza \
+        --o-denoising-stats denoising-stats.qza
